@@ -1,0 +1,14 @@
+fastapi>=0.116.2
+fhir.resources==7.1.0
+httpx
+pydantic==2.9.2
+pydantic-settings>=2.0.0
+pytest
+pytest-asyncio
+python-dateutil==2.9.0.post0
+python-multipart>=0.0.13
+python-tds==1.17.1
+setuptools>=68,<81
+SQLAlchemy==2.0.35
+sqlalchemy-pytds==1.0.2
+uvicorn==0.30.6
