@@ -1,0 +1,56 @@
+services:
+  ldap-directory:
+    build:
+      context: ./LDAP/docker
+      dockerfile: openldap.Dockerfile
+    environment:
+      LDAP_ORGANISATION: "Demo HPD Directory"
+      LDAP_DOMAIN: "hpd"
+      LDAP_ADMIN_PASSWORD: "admin"
+      LDAP_TLS: "false"
+    ports:
+      - "1389:389"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "ldapsearch -x -H ldap://127.0.0.1:389 -D 'cn=admin,dc=hpd' -w admin -b 'dc=hpd' -s base '(objectClass=*)' >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  mcsd:
+    build:
+      context: ./mCSD
+      dockerfile: Dockerfile
+    env_file:
+      - ./mCSD/.env.Docker
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  pdqm:
+    build:
+      context: ./PDQm
+      dockerfile: Dockerfile
+    env_file:
+      - ./PDQm/.env.Docker
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+
+  ldap:
+    build:
+      context: ./LDAP
+      dockerfile: Dockerfile
+    env_file:
+      - ./LDAP/.env.Docker
+    depends_on:
+      ldap-directory:
+        condition: service_healthy
+    ports:
+      - "8002:8000"
+    restart: unless-stopped

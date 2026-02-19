@@ -1,0 +1,63 @@
+dn: ou=HCProfessional,dc=hpd
+objectClass: top
+objectClass: organizationalUnit
+ou: HCProfessional
+
+dn: ou=HCRegulatedOrganization,dc=hpd
+objectClass: top
+objectClass: organizationalUnit
+ou: HCRegulatedOrganization
+
+dn: uid=jjansen,ou=HCProfessional,dc=hpd
+objectClass: top
+objectClass: inetOrgPerson
+uid: jjansen
+cn: Jan Jansen
+sn: Jansen
+givenName: Jan
+mail: jan.jansen@demo-hpd.local
+displayName: Dr. Jan Jansen
+telephoneNumber: +31-20-7000001
+mobile: +31-6-7000001
+title: Cardioloog
+o: Demo Ziekenhuis Oost
+ou: Cardiologie
+
+dn: uid=mdeboer,ou=HCProfessional,dc=hpd
+objectClass: top
+objectClass: inetOrgPerson
+uid: mdeboer
+cn: Mieke de Boer
+sn: de Boer
+givenName: Mieke
+mail: mieke.deboer@demo-hpd.local
+displayName: Drs. Mieke de Boer
+telephoneNumber: +31-20-7000002
+mobile: +31-6-7000002
+title: Internist
+o: Demo Kliniek West
+ou: Interne Geneeskunde
+
+dn: uid=zorgloket-oost,ou=HCRegulatedOrganization,dc=hpd
+objectClass: top
+objectClass: inetOrgPerson
+uid: zorgloket-oost
+cn: Demo Ziekenhuis Oost
+sn: Demo Ziekenhuis Oost
+mail: zorgloket.oost@demo-hpd.local
+displayName: Demo Ziekenhuis Oost
+telephoneNumber: +31-20-7100001
+o: Demo Ziekenhuis Oost
+ou: Zorgloket
+
+dn: uid=huisartsenpost-west,ou=HCRegulatedOrganization,dc=hpd
+objectClass: top
+objectClass: inetOrgPerson
+uid: huisartsenpost-west
+cn: Demo Huisartsenpost West
+sn: Demo Huisartsenpost West
+mail: contact@hap-west.demo-hpd.local
+displayName: Demo Huisartsenpost West
+telephoneNumber: +31-20-7100002
+o: Demo Huisartsenpost West
+ou: Huisartsenpost

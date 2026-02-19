@@ -282,8 +282,8 @@
 
 <script>
     // === instellingen =======================================================
-    // Gebruik dezelfde host/poort als de app die deze pagina serveert.
-    const BASE_URL = window.location.origin;
+    // Injected by backend template from PDQM_LDAP_BASE.
+    const BASE_URL = {{ ldap_base_url | tojson }};
     const API_KEY = "";                          // laat leeg als geen API key vereist is
     const HPD_LIMIT = 50;                        // vergelijkbaar met HPD_LIMIT in Access
 

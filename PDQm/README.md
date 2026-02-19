@@ -46,6 +46,10 @@ De app leest de configuratie uit environment variabelen (en optioneel uit `.env`
 
 #### Database (SQLite of SQL Server)
 
+Extra frontend-configuratie:
+- `PDQM_LDAP_BASE` - base URL die `ldap_zoek.html` gebruikt voor LDAP-calls (default: `http://localhost:8002`)
+- `PDQM_MCSD_BASE` - base URL die `mcsd_zoek.html` gebruikt voor mCSD-calls (default: `http://localhost:8000`)
+
 **Environment variable:**
 - `PDQM_DB_URL` – SQLAlchemy database URL
 
@@ -60,6 +64,12 @@ export PDQM_DB_URL="sqlite:///./pdqm.db"
 
 # SQL Server (voorbeeld; vul zelf host/user/db in)
 export PDQM_DB_URL="mssql+pytds://USER:PASSWORD@SQLHOST:1433/DATABASE?autocommit=true"
+
+# LDAP proxy voor ldap_zoek.html
+export PDQM_LDAP_BASE="http://localhost:8002"
+
+# mCSD proxy voor mcsd_zoek.html
+export PDQM_MCSD_BASE="http://localhost:8000"
 ```
 
 ##### Nuttige parameters voor gebruik in PDQM_DB_URL

@@ -278,8 +278,8 @@
 
 <script>
     // === instellingen =======================================================
-    // Gebruik dezelfde host/poort als de app die deze pagina serveert.
-    const BASE_URL = window.location.origin;
+    // Injected by backend template from PDQM_MCSD_BASE.
+    const BASE_URL = {{ mcsd_base_url | tojson }};
     const API_KEY = "";                          // laat leeg als geen API key vereist is
     const MCS_LIMIT = 50;
 
