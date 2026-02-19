@@ -106,3 +106,4 @@ venv.bak/
 
 .idea/*
 LDAP/.env.Ubuntu_server
+pdqm.db
