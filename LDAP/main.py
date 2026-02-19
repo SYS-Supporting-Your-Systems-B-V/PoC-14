@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, ValidationError
@@ -14,6 +14,9 @@ import ssl
 import sys
 import logging
 import uuid
+from pathlib import Path
+
+APP_ROOT = Path(__file__).resolve().parent
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s:%(filename)s:%(lineno)d %(message)s", stream=sys.stdout)
 logger = logging.getLogger("hpd.ldap")
@@ -166,6 +169,18 @@ app.add_middleware(
 )
 
 app.add_middleware(RequestIdMiddleware)
+
+
+def _serve_html_page(path: Path) -> FileResponse:
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"HTML page not found: {path.name}")
+    return FileResponse(path, media_type="text/html; charset=utf-8")
+
+
+@app.get("/ldap_zoek/", response_class=FileResponse, include_in_schema=False)
+def ldap_zoek_page():
+    return _serve_html_page(APP_ROOT / "ldap_zoek.html")
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
