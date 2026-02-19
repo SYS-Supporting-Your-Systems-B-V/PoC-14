@@ -167,7 +167,7 @@ def minimal_capability_statement(server_url: str) -> Dict[str, Any]:
       "resourceType": "CapabilityStatement",
       "status": "active",
       "kind": "instance",
-      "fhirVersion": "4.0.1",
+      "fhirVersion": "4.3.0",
       "format": ["application/fhir+json", "application/fhir+xml"],  # XML not yet implemented
       "rest": [{
         "mode": "server",

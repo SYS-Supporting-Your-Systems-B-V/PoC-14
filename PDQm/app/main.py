@@ -5,9 +5,10 @@ from datetime import date
 from contextlib import asynccontextmanager
 import logging
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, Depends, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 # --- begin minimal shim (before importing sqlalchemy_pytds) ---
 # this is needed so sqlalchemy_pytds can find pytds.tds_session
 import sys, types
@@ -36,6 +37,9 @@ from .fhir_utils import (
 )
 from fhir.resources.R4B.patient import Patient
 from .pdqm_where import _parse_fhir_date_bounds
+
+
+APP_ROOT = Path(__file__).resolve().parents[1]
 
 # --- local minimal patient renderer for tests ---
 FHIR_MMN_URL = "http://hl7.org/fhir/StructureDefinition/patient-mothersMaidenName"
@@ -154,6 +158,26 @@ app = FastAPI(
     title="PDQm Minimal Server (Python/FastAPI) – Real Schema",
     lifespan=lifespan
 )
+
+
+def _serve_html_page(path: Path) -> FileResponse:
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"HTML page not found: {path.name}",
+        )
+    return FileResponse(path, media_type="text/html; charset=utf-8")
+
+
+@app.get("/ldap_zoek/", response_class=FileResponse, include_in_schema=False)
+def ldap_zoek_page():
+    return _serve_html_page(APP_ROOT / "ldap_zoek.html")
+
+
+@app.get("/mscd_zoek/", response_class=FileResponse, include_in_schema=False)
+def mscd_zoek_page():
+    return _serve_html_page(APP_ROOT / "mcsd_zoek.html")
+
 
 @app.exception_handler(OperationalError)
 async def db_operational_error_handler(request: Request, exc: OperationalError):
@@ -303,7 +327,7 @@ def patient_search(request: Request, db: Session = Depends(get_db)):
         if ors:
             filters.append(or_(*ors))
 
-    # family (string). Support :exact modifier; default is contains (case-insensitive).
+    # family (string). Support :exact modifier; default is starts-with (case-insensitive).
     fam_params = _param_values_with_modifier(request, "family")
     for name, v in fam_params:
         exact = name.endswith(":exact")
@@ -312,7 +336,7 @@ def patient_search(request: Request, db: Session = Depends(get_db)):
             if exact:
                 ors.append(func.lower(PatientModel.name_family) == token.lower())
             else:
-                ors.append(func.lower(PatientModel.name_family).like(f"%{token.lower()}%"))
+                ors.append(func.lower(PatientModel.name_family).like(f"{token.lower()}%"))
         if ors:
             filters.append(or_(*ors))
 
@@ -325,11 +349,11 @@ def patient_search(request: Request, db: Session = Depends(get_db)):
             if exact:
                 ors.append(func.lower(PatientModel.name_given_0) == token.lower())
             else:
-                ors.append(func.lower(PatientModel.name_given_0).like(f"%{token.lower()}%"))
+                ors.append(func.lower(PatientModel.name_given_0).like(f"{token.lower()}%"))
         if ors:
             filters.append(or_(*ors))
 
-    # address (broad contains across line/city/postal/country); support :exact
+    # address (broad starts-with across line/city/postal/country); support :exact
     addr_params = _param_values_with_modifier(request, "address")
     for name, v in addr_params:
         exact = name.endswith(":exact")
@@ -348,10 +372,10 @@ def patient_search(request: Request, db: Session = Depends(get_db)):
             else:
                 ors.extend(
                     [
-                        func.lower(PatientModel.address_line_0).like(f"%{t}%"),
-                        func.lower(PatientModel.address_city).like(f"%{t}%"),
-                        func.lower(PatientModel.address_postalCode).like(f"%{t}%"),
-                        func.lower(PatientModel.address_country).like(f"%{t}%"),
+                        func.lower(PatientModel.address_line_0).like(f"{t}%"),
+                        func.lower(PatientModel.address_city).like(f"{t}%"),
+                        func.lower(PatientModel.address_postalCode).like(f"{t}%"),
+                        func.lower(PatientModel.address_country).like(f"{t}%"),
                     ]
                 )
         if ors:
@@ -369,7 +393,7 @@ def patient_search(request: Request, db: Session = Depends(get_db)):
             if exact:
                 ors = [func.lower(field) == t.lower() for t in _split_or_list(v)]
             else:
-                ors = [func.lower(field).like(f"%{t.lower()}%") for t in _split_or_list(v)]
+                ors = [func.lower(field).like(f"{t.lower()}%") for t in _split_or_list(v)]
             if ors:
                 filters.append(or_(*ors))
 

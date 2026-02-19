@@ -278,8 +278,8 @@
 
 <script>
     // === instellingen =======================================================
-    // Pas deze waarden aan je omgeving aan:
-    const BASE_URL = "http://10.10.10.199:8000"; // bv. "http://hostname:8000"
+    // Gebruik dezelfde host/poort als de app die deze pagina serveert.
+    const BASE_URL = window.location.origin;
     const API_KEY = "";                          // laat leeg als geen API key vereist is
     const MCS_LIMIT = 50;
 
