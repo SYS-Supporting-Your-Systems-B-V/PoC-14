@@ -22,7 +22,7 @@ from contextvars import ContextVar
 from fastapi import FastAPI, Query, HTTPException, Request, Depends, Header, Body
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from typing import Dict, Any, List, Optional, Tuple, Literal
 from urllib.parse import urlparse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -35,6 +35,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("mcsd.app")
 audit_logger = logging.getLogger("mcsd.audit")
+APP_ROOT = Path(__file__).resolve().parent
 REQUEST_ID_CTX: ContextVar[str] = ContextVar("request_id", default="")
 UP_SEQ_CTX: ContextVar[int] = ContextVar("up_seq", default=0)
 _ENV_FILE_NAME = os.getenv("MCSD_ENV_FILE", ".env")
@@ -415,6 +416,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(RequestIdMiddleware)
+
+
+def _serve_html_page(path: Path) -> FileResponse:
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"HTML page not found: {path.name}")
+    return FileResponse(path, media_type="text/html; charset=utf-8")
+
+
+@app.get("/mscd_zoek/", response_class=FileResponse, include_in_schema=False)
+def mscd_zoek_page():
+    return _serve_html_page(APP_ROOT / "mcsd_zoek.html")
 
 
 @app.exception_handler(HTTPException)
