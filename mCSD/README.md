@@ -2,8 +2,89 @@
 
 Deze app is een kleine **FastAPI**-proxy die eenvoudige queries vertaalt naar **FHIR (mCSD / ITI-90)**-searches op een upstream mCSD/FHIR-server en (waar nodig) resultaten “flattened” teruggeeft voor gebruik in een frontend.
 
-**Legenda**
-- **[PoC]** = PoC-/demo-specifiek (BgZ demo en PoC 8/9 endpoints).
+De proxy bedient twee PoC's die onafhankelijk van elkaar ingezet kunnen worden:
+
+- **PoC 14** — mCSD-adresboek: zoeken van organisaties, locaties, zorgverleners en e-mailadressen.
+- **PoC 9** — MSZ / BgZ notified pull: organisatieonderdelen, technische endpoints, capability mapping en het versturen van BgZ-notificaties.
+
+---
+
+## PoC-overzicht: endpoints en configuratie
+
+### Endpoints per PoC
+
+| Endpoint | PoC 14 | PoC 9 | Opmerkingen |
+|---|:---:|:---:|---|
+| `GET /health` | ✓ | ✓ | Altijd beschikbaar |
+| `GET /mcsd/search/{resource}` | ✓ | — | Pass-through FHIR search (Practitioner, PractitionerRole, HealthcareService, Location, Organization, OrganizationAffiliation) |
+| `GET /addressbook/organization` | ✓ | — | Ook gebruikt door `mcsd_zoek.html` |
+| `GET /addressbook/location` | ✓ | — | Ook gebruikt door `mcsd_zoek.html` |
+| `GET /addressbook/search` | ✓ | — | Flattened practitioner + role search |
+| `GET /addressbook/find-practitionerrole` | — | ✓ | Practitioner → PractitionerRole lookup |
+| `GET /poc9/msz/organizations` | — | ✓ | MSZ-zorgorganisaties |
+| `GET /poc9/msz/orgunits` | — | ✓ | Organisatieonderdelen |
+| `GET /poc9/msz/endpoints` | — | ✓ | Technische endpoints |
+| `GET /poc9/msz/capability-mapping` | — | ✓ | PoC 9 decision tree A–D |
+| `POST /bgz/load-data` | — | ✓ | BgZ sample data laden (demo) |
+| `POST /bgz/preflight` | — | ✓ | Preflight check vóór notificatie |
+| `POST /bgz/task-preview` | — | ✓ | Task preview (UI/test) |
+| `POST /bgz/notify` | — | ✓ | BgZ notificatie versturen |
+
+### Configuratie per PoC
+
+| Environment variabele | PoC 14 | PoC 9 | Toelichting |
+|---|:---:|:---:|---|
+| `MCSD_BASE` | **vereist** | **vereist** | Upstream mCSD/FHIR base URL |
+| `MCSD_API_KEY` | optioneel | optioneel | API key beveiliging |
+| `MCSD_ALLOW_ORIGINS` | aanbevolen | aanbevolen | CORS origins |
+| `MCSD_ALLOWED_HOSTS` | aanbevolen | aanbevolen | Allowed hosts |
+| `MCSD_IS_PRODUCTION` | optioneel | optioneel | Productie guardrails |
+| `MCSD_LOG_LEVEL` | optioneel | optioneel | Loglevel |
+| `MCSD_UPSTREAM_TIMEOUT` | optioneel | optioneel | Timeout upstream calls |
+| `MCSD_HTTPX_MAX_CONNECTIONS` | optioneel | optioneel | HTTP client pool |
+| `MCSD_HTTPX_MAX_KEEPALIVE_CONNECTIONS` | optioneel | optioneel | HTTP client pool |
+| `MCSD_BEARER_TOKEN` | optioneel | optioneel | Upstream authenticatie |
+| `MCSD_VERIFY_TLS` | optioneel | optioneel | TLS verificatie |
+| `MCSD_CA_CERTS_FILE` | optioneel | optioneel | Custom CA bundle |
+| `MCSD_MAX_QUERY_PARAMS` | optioneel | — | Limieten voor `/mcsd/search/{resource}` |
+| `MCSD_MAX_QUERY_VALUE_LENGTH` | optioneel | — | Limieten voor `/mcsd/search/{resource}` |
+| `MCSD_MAX_QUERY_PARAM_VALUES` | optioneel | — | Limieten voor `/mcsd/search/{resource}` |
+| `MCSD_NOTIFIEDPULL_ENABLED` | — | optioneel | BgZ endpoints aan/uit (default: aan) |
+| `MCSD_SENDER_URA` | — | **vereist** | BgZ sender-identiteit |
+| `MCSD_SENDER_NAME` | — | **vereist** | BgZ sender-identiteit |
+| `MCSD_SENDER_UZI_SYS` | — | **vereist** | BgZ sender-identiteit |
+| `MCSD_SENDER_SYSTEM_NAME` | — | **vereist** | BgZ sender-identiteit |
+| `MCSD_SENDER_BGZ_BASE` | — | **vereist voor verzenden** | BgZ sender FHIR base |
+| `MCSD_AUDIT_HMAC_KEY` | — | optioneel | BSN pseudonimisatie in audit logs |
+| `MCSD_ALLOW_TASK_PREVIEW_IN_PRODUCTION` | — | optioneel | Task preview in productie |
+| `MCSD_CAPABILITY_CACHE_TTL_SECONDS` | — | optioneel | Cache TTL capability checks |
+| `MCSD_DEBUG_DUMP_JSON` | — | optioneel | Debug JSON dumps |
+| `MCSD_DEBUG_DUMP_DIR` | — | optioneel | Debug dump directory |
+| `MCSD_DEBUG_DUMP_REDACT` | — | optioneel | Redactie in debug dumps |
+
+### Snel starten per PoC
+
+**Alleen PoC 14** — minimale configuratie:
+
+```bash
+export MCSD_BASE=https://hapi.fhir.org/baseR4
+# optioneel: MCSD_NOTIFIEDPULL_ENABLED=false  (schakelt de BgZ/PoC 9 endpoints uit)
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+**Alleen PoC 9** — minimale configuratie:
+
+```bash
+export MCSD_BASE=https://hapi.fhir.org/baseR4
+export MCSD_SENDER_URA=urn:oid:2.16.528.1.1007.3.3.1234567
+export MCSD_SENDER_NAME="Mijn ZBC"
+export MCSD_SENDER_UZI_SYS=urn:oid:2.16.528.1.1007.3.2.1234567
+export MCSD_SENDER_SYSTEM_NAME="Mijn ZBC (BgZ)"
+export MCSD_SENDER_BGZ_BASE=https://mijn-sender-fhir.example.org/fhir
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+**Beide PoC's** — combineer de bovenstaande variabelen.
 
 ---
 
@@ -114,7 +195,7 @@ Als je `MCSD_IS_PRODUCTION=true` zet, faalt de app bij startup als één van dez
 export MCSD_IS_PRODUCTION=true
 ```
 
-#### Query-limieten (bescherming)
+#### [PoC 14] Query-limieten (bescherming)
 
 Voor `GET /mcsd/search/{resource}` (het pass-through search endpoint) kun je limieten instellen. Deze gelden niet voor de addressbook- of PoC-endpoints, die eigen validatie hebben.
 
@@ -126,9 +207,10 @@ export MCSD_MAX_QUERY_PARAM_VALUES=20
 
 #### Feature flags en logging
 
-##### Notified Pull endpoints aan/uit (BgZ)
+##### [PoC 9] Notified Pull endpoints aan/uit (BgZ)
 
-Standaard staan de BgZ/Notified Pull endpoints **aan**. Je kunt ze in één keer uitzetten met:
+Standaard staan de BgZ/Notified Pull endpoints **aan** en worden ook controles gedaan om te bepalen of de configuratie hiervoor in orde is.
+Voor PoC 14 worden de BgZ/Notified Pull endpoints niet gebruikt. Ze kunnen daarom in één keer uit gezet worden met:
 
 ```bash
 export MCSD_NOTIFIEDPULL_ENABLED=false
@@ -156,7 +238,7 @@ Voor sommige best-effort capability checks (bijv. `/metadata`) gebruikt de proxy
 export MCSD_CAPABILITY_CACHE_TTL_SECONDS=600
 ```
 
-#### [PoC] BgZ sender-identiteit (voor `POST /bgz/preflight`, `POST /bgz/task-preview` en `POST /bgz/notify`)
+#### [PoC 9] BgZ sender-identiteit (voor `POST /bgz/preflight`, `POST /bgz/task-preview` en `POST /bgz/notify`)
 
 De BgZ endpoints versturen/tonen een **notified pull**-achtige Task namens een *vaste* afzender (PoC-sender).  
 Om spoofing vanuit het frontend te voorkomen komen sender-waarden uit environment variabelen:
@@ -180,7 +262,7 @@ export MCSD_SENDER_BGZ_BASE=https://mijn-sender-fhir.example.org/fhir
 Opmerking:
 - Als `MCSD_SENDER_BGZ_BASE` ontbreekt, dan blijft `POST /bgz/task-preview` bruikbaar maar zonder `sender_bgz_base` metadata/extensie; `POST /bgz/preflight` en `POST /bgz/notify` falen met `500` (misconfigured).
 
-#### [PoC] Audit logging en task preview (voor `POST /bgz/notify` en `POST /bgz/task-preview`)
+#### [PoC 9] Audit logging en task preview (voor `POST /bgz/notify` en `POST /bgz/task-preview`)
 
 Voor audit logging en (optioneel) het tonen van de uiteindelijke Task vóór verzending zijn er extra variabelen:
 
@@ -194,7 +276,7 @@ export MCSD_AUDIT_HMAC_KEY="een-lange-random-secret"
 export MCSD_ALLOW_TASK_PREVIEW_IN_PRODUCTION=false
 ```
 
-#### [PoC] Debug JSON dumps (voor `POST /bgz/load-data` en `POST /bgz/notify`)
+#### [PoC 9] Debug JSON dumps (voor `POST /bgz/load-data` en `POST /bgz/notify`)
 
 Voor debug doeleinden kan de proxy de **outgoing JSON payloads** die deze endpoints naar een externe FHIR server sturen wegschrijven als bestanden op disk.
 
@@ -292,7 +374,7 @@ Als `MCSD_API_KEY` is ingesteld, stuur dan bij elke call (behalve `GET /health`)
 X-API-Key: <jouw key>
 ```
 
-### Basis endpoints
+### Gedeelde endpoints
 
 #### `GET /health`
 
@@ -305,7 +387,7 @@ Voorbeeld:
 curl http://localhost:8000/health
 ```
 
-#### `GET /mcsd/search/{resource}`
+#### [PoC 14] `GET /mcsd/search/{resource}`
 
 FHIR search “pass-through” met allow-list filtering. Alleen een vaste set resource types wordt geaccepteerd:
 
@@ -329,7 +411,7 @@ curl "http://localhost:8000/mcsd/search/Organization?active=true&name:contains=z
 
 ### Addressbook convenience endpoints
 
-#### `GET /addressbook/find-practitionerrole`
+#### [PoC 9] `GET /addressbook/find-practitionerrole`
 
 Convenience endpoint om eerst `Practitioner` te zoeken op naam en daarna bijbehorende `PractitionerRole` te halen.
 
@@ -344,9 +426,9 @@ Voorbeeld:
 curl "http://localhost:8000/addressbook/find-practitionerrole?name=Jansen"
 ```
 
-#### `GET /addressbook/search`
+#### [PoC 14] `GET /addressbook/search`
 
-Zoekt `Practitioner` + `PractitionerRole` en geeft “flattened” rows terug.  
+Zoekt `Practitioner` + `PractitionerRole` en geeft "flattened" rows terug.  
 Verrijkt daarnaast best-effort met:
 - `HealthcareService` (op Organization of Location)
 - `OrganizationAffiliation` relaties (met org-namen via `_include`)
@@ -369,11 +451,17 @@ Voorbeeld:
 curl "http://localhost:8000/addressbook/search?org_name=Oost&specialty=cardio&limit=50"
 ```
 
+Voorbeeld: vind zorgverleners die "Jansen" heten in organisaties waarvan de naam "Ziekenhuis" bevat.
+
+```bash
+curl "http://localhost:8000/addressbook/search?name=Jansen&org_name=Ziekenhuis&limit=50"
+```
+
 Response (globaal):
 - `total`: aantal rows
 - `rows`: lijst met velden zoals `practitioner_name`, `organization_name`, `email`, `phone`, `service_name`, `affiliation_*`, …
 
-#### `GET /addressbook/organization`
+#### [PoC 14] `GET /addressbook/organization`
 
 Zoekt **organisaties** en retourneert functionele mailboxen:
 - uit `Organization.telecom` (system=email)
@@ -391,7 +479,7 @@ Voorbeeld:
 curl "http://localhost:8000/addressbook/organization?name:contains=ziekenhuis&limit=20"
 ```
 
-#### `GET /addressbook/location`
+#### [PoC 14] `GET /addressbook/location`
 
 Zoekt **locaties** en geeft de functionele mailbox van de zorgaanbieder (organisatie) terug:
 - eerst `Location.telecom`
@@ -411,7 +499,7 @@ curl "http://localhost:8000/addressbook/location?name:contains=polikliniek&limit
 
 ---
 
-## Capability mapping (PoC 9)
+## [PoC 9] Capability mapping
 
 IG CodeSystem used in Endpoint.payloadType to declare data-exchange capabilities.
 Reference: https://build.fhir.org/ig/nuts-foundation/nl-generic-functions-ig/CodeSystem-nl-gf-data-exchange-capabilities.html
@@ -440,9 +528,9 @@ for the capability mapping to work correctly.
 
 ---
 
-## PoC endpoints
+## PoC-specifieke endpoints
 
-### [PoC] BgZ endpoints
+### [PoC 9] BgZ endpoints
 
 #### `POST /bgz/load-data`
 
@@ -553,7 +641,7 @@ Als er via PoC9 capability mapping géén `Endpoint` met payloadType `Twiin-TA-n
 
 Dit is een “hard fail”: de caller moet eerst zorgen dat in het mCSD-adresboek een geschikt (actief) Twiin-TA-notification Endpoint aanwezig is en daarna opnieuw notificeren.
 
-### [PoC] PoC 8/9 (MSZ) endpoints
+### [PoC 9] MSZ endpoints
 
 Deze endpoints ondersteunen PoC 8/9 UI-flows (MSZ organisaties, organisatieonderdelen en technische endpoints).  
 Ze hebben cursor-based paginering voor “meer laden” in de UI.
@@ -600,7 +688,7 @@ Query parameters:
 
 ---
 
-## Frontend: `mcsd_zoek.html`
+## [PoC 14] Frontend: `mcsd_zoek.html`
 
 `mcsd_zoek.html` is een standalone HTML-pagina waarmee gebruikers e-mailadressen van organisaties of locaties kunnen opzoeken in het mCSD-adresboek.
 
