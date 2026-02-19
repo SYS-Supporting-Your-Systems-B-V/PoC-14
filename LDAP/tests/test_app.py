@@ -232,3 +232,13 @@ def test_empty_mail_value(monkeypatch):
     assert r.status_code == 200
     mails = r.json()["items"][0]["mail"]
     assert "" in mails and "alt-nomailbox@beta-clinic.example" in mails
+
+
+def test_ldap_zoek_page_uses_same_origin_base_url():
+    r = client.get("/ldap_zoek/")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    html = r.text
+    assert "E-mailadres zoeken (HPD LDAP)" in html
+    assert "window.location.origin" in html
+    assert "10.10.10.199" not in html

@@ -284,3 +284,13 @@ def test_addressbook_search_maps_org_name_contains_and_city_filters(appmod, clie
     assert len(data["rows"]) == 1
     assert data["rows"][0].get("organization_name") == "Alpha Hospital"
     assert data["rows"][0].get("city") == "Amsterdam"
+
+
+def test_mscd_zoek_page_uses_same_origin_base_url(client):
+    r = client.get("/mscd_zoek/")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    html = r.text
+    assert "E-mailadres zoeken (mCSD)" in html
+    assert "window.location.origin" in html
+    assert "10.10.10.199" not in html
