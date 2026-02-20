@@ -1,6 +1,9 @@
-# PoC 14 Stack
+# PoC 14
 
-This repository runs a small local stack with three app services plus a seeded LDAP directory:
+This repository runs a local proof-of-concept stack with mCSD, PDQm, and LDAP services for directory and addressing workflows.
+It is part of the 'Generieke Functies, lokalisatie en addressering' project of the Ministry of Health, Welfare and Sport of the Dutch government.
+
+This stack includes three app services plus a seeded LDAP directory:
 
 - `mcsd` (port `8000`) - mCSD addressbook proxy
 - `pdqm` (port `8001`) - PDQm FHIR API + hosted HTML test pages
