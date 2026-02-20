@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -424,6 +424,10 @@ def hpd_search(req: SearchRequest):
             pass
 
 @app.get("/hpd/search", response_model=SearchResponse, dependencies=[Depends(verify_api_key)])
-def hpd_search_get(q: str, scope: Literal["person", "org"] = "person", limit: int = settings.default_size_limit):
+def hpd_search_get(
+    q: str = Query(..., max_length=64),
+    scope: Literal["person", "org"] = "person",
+    limit: int = Query(settings.default_size_limit, ge=1, le=500),
+):
     req = SearchRequest(q=q, scope=scope, limit=limit)
     return hpd_search(req)
