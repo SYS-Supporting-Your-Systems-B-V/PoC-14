@@ -1,28 +1,35 @@
 import types
 import pytest
 from fastapi.testclient import TestClient
-import main as appmod
+from bonsai import LDAPSearchScope
+from bonsai.errors import AuthenticationError as LDAPAuthenticationError
+from bonsai.errors import ConnectionError as LDAPConnectionError
+from bonsai.errors import NoSuchObjectError as LDAPNoSuchObjectError
+import mainldap4 as appmod
 
 client = TestClient(appmod.app)
 
 class FakeEntry:
     def __init__(self, dn, attrs):
-        self.entry_dn = dn
-        self.entry_attributes_as_dict = attrs
+        self.dn = dn
+        self._attrs = attrs
+
+    def get(self, key, default=None):
+        return self._attrs.get(key, default)
 
 class FakeConn:
     def __init__(self, entries):
         self._entries = entries
-        self.entries = []
 
-    def search(self, search_base, search_filter, search_scope, attributes, size_limit):
-        if size_limit < len(self._entries):
-            self.entries = self._entries[:size_limit]
-        else:
-            self.entries = self._entries
-        return True
+    def search(self, base, scope, filter_str=None, attrlist=None, timeout=None, sizelimit=None):
+        if scope == LDAPSearchScope.BASE:
+            # OU-existence check: altijd een niet-leeg resultaat teruggeven
+            return [object()]
+        if sizelimit is not None and sizelimit < len(self._entries):
+            return self._entries[:sizelimit]
+        return list(self._entries)
 
-    def unbind(self):
+    def close(self):
         return True
 
 @pytest.fixture
@@ -107,24 +114,6 @@ def test_empty_ok(monkeypatch):
     assert data["items"] == []
 
 def test_items_without_mail(monkeypatch):
-    from main import app, HpdEntry, SearchResponse
-    from fastapi.testclient import TestClient
-    import main as appmod
-
-    class FakeEntry:
-        def __init__(self, dn, attrs):
-            self.entry_dn = dn
-            self.entry_attributes_as_dict = attrs
-
-    class FakeConn:
-        def __init__(self, entries):
-            self._entries = entries
-            self.entries = []
-        def search(self, **kwargs):
-            self.entries = self._entries
-            return True
-        def unbind(self): return True
-
     entries = [
         FakeEntry("o=Gamma Hospital,ou=HCRegulatedOrganization,dc=HPD", {
             "o": ["Gamma Hospital"], "cn": ["Gamma Hospital"], "telephoneNumber": ["020-9090909"]
@@ -132,8 +121,8 @@ def test_items_without_mail(monkeypatch):
         })
     ]
     monkeypatch.setattr(appmod, "_connect", lambda: FakeConn(entries))
-    client = TestClient(app)
-    r = client.get("/hpd/search", params={"q":"Gamma","scope":"org","limit":10})
+    client_local = TestClient(appmod.app)
+    r = client_local.get("/hpd/search", params={"q":"Gamma","scope":"org","limit":10})
     assert r.status_code == 200
     data = r.json()
     assert data["count"] == 1
@@ -141,23 +130,6 @@ def test_items_without_mail(monkeypatch):
     assert data["items"][0]["mail"] == []  # leeg is ok
 
 def test_unicode_query_passthrough(monkeypatch):
-    from fastapi.testclient import TestClient
-    import main as appmod
-
-    class FakeEntry:
-        def __init__(self, dn, attrs):
-            self.entry_dn = dn
-            self.entry_attributes_as_dict = attrs
-
-    class FakeConn:
-        def __init__(self, entries):
-            self._entries = entries
-            self.entries = []
-        def search(self, **kwargs):
-            self.entries = self._entries
-            return True
-        def unbind(self): return True
-
     entries = [FakeEntry("uid=jose07,ou=HCProfessional,dc=HPD", {
         "uid": ["jose07"],
         "objectClass": ["inetOrgPerson"],
@@ -168,36 +140,19 @@ def test_unicode_query_passthrough(monkeypatch):
         "mail": ["jose.alvarez@gamma-hospital.example"],
     })]
     monkeypatch.setattr(appmod, "_connect", lambda: FakeConn(entries))
-    client = TestClient(appmod.app)
-    r = client.get("/hpd/search", params={"q":"Álvarez","scope":"person","limit":10})
+    client_local = TestClient(appmod.app)
+    r = client_local.get("/hpd/search", params={"q":"Álvarez","scope":"person","limit":10})
     assert r.status_code == 200
     assert r.json()["items"][0]["cn"][0] == "José Álvarez"
 
 def test_orgunit_without_cn(monkeypatch):
-    import main as appmod
-    from fastapi.testclient import TestClient
-
-    class FakeEntry:
-        def __init__(self, dn, attrs):
-            self.entry_dn = dn
-            self.entry_attributes_as_dict = attrs
-
-    class FakeConn:
-        def __init__(self, entries):
-            self._entries = entries
-            self.entries = []
-        def search(self, **kwargs):
-            self.entries = self._entries
-            return True
-        def unbind(self): return True
-
     entries = [FakeEntry(
         "ou=Admissions,o=Beta Clinic,ou=HCRegulatedOrganization,dc=HPD",
         {"ou": ["Admissions"], "displayName": ["Admissions Desk"], "telephoneNumber": ["020-7777000"]}
     )]
     monkeypatch.setattr(appmod, "_connect", lambda: FakeConn(entries))
-    client = TestClient(appmod.app)
-    r = client.get("/hpd/search", params={"q":"Admissions","scope":"org","limit":5})
+    client_local = TestClient(appmod.app)
+    r = client_local.get("/hpd/search", params={"q":"Admissions","scope":"org","limit":5})
     assert r.status_code == 200
     data = r.json()
     assert data["count"] == 1
@@ -205,30 +160,13 @@ def test_orgunit_without_cn(monkeypatch):
     assert data["items"][0]["displayName"] == ["Admissions Desk"]
 
 def test_empty_mail_value(monkeypatch):
-    import main as appmod
-    from fastapi.testclient import TestClient
-
-    class FakeEntry:
-        def __init__(self, dn, attrs):
-            self.entry_dn = dn
-            self.entry_attributes_as_dict = attrs
-
-    class FakeConn:
-        def __init__(self, entries):
-            self._entries = entries
-            self.entries = []
-        def search(self, **kwargs):
-            self.entries = self._entries
-            return True
-        def unbind(self): return True
-
     entries = [FakeEntry(
         "ou=NoMailbox,o=Beta Clinic,ou=HCRegulatedOrganization,dc=HPD",
         {"ou": ["NoMailbox"], "mail": ["", "alt-nomailbox@beta-clinic.example"]}
     )]
     monkeypatch.setattr(appmod, "_connect", lambda: FakeConn(entries))
-    client = TestClient(appmod.app)
-    r = client.get("/hpd/search", params={"q":"NoMailbox","scope":"org","limit":5})
+    client_local = TestClient(appmod.app)
+    r = client_local.get("/hpd/search", params={"q":"NoMailbox","scope":"org","limit":5})
     assert r.status_code == 200
     mails = r.json()["items"][0]["mail"]
     assert "" in mails and "alt-nomailbox@beta-clinic.example" in mails
@@ -242,3 +180,40 @@ def test_ldap_zoek_page_uses_same_origin_base_url():
     assert "E-mailadres zoeken (HPD LDAP)" in html
     assert "window.location.origin" in html
     assert "10.10.10.199" not in html
+
+def test_missing_ou_returns_empty(monkeypatch):
+    """Als de basis-OU ontbreekt in LDAP (LDAPNoSuchObjectError), retourneert de API 0 resultaten."""
+    class FakeConnMissingOU:
+        def search(self, base, scope, filter_str=None, attrlist=None, timeout=None, sizelimit=None):
+            if scope == LDAPSearchScope.BASE:
+                raise LDAPNoSuchObjectError()
+            return []
+        def close(self):
+            return True
+
+    monkeypatch.setattr(appmod, "_connect", lambda: FakeConnMissingOU())
+    r = client.post("/hpd/search", json={"q": "x", "scope": "person", "limit": 10})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["count"] == 0
+    assert data["items"] == []
+
+def test_ldap_bind_error_returns_502(monkeypatch):
+    """_connect() converteert LDAPAuthenticationError naar HTTP 502."""
+    class _FakeClient:
+        def connect(self, timeout=None):
+            raise LDAPAuthenticationError()
+
+    monkeypatch.setattr(appmod, "_create_client", lambda *a, **kw: _FakeClient())
+    r = client.post("/hpd/search", json={"q": "x", "scope": "person", "limit": 10})
+    assert r.status_code == 502
+
+def test_ldap_connection_error_returns_503(monkeypatch):
+    """_connect() converteert LDAPConnectionError naar HTTP 503."""
+    class _FakeClient:
+        def connect(self, timeout=None):
+            raise LDAPConnectionError()
+
+    monkeypatch.setattr(appmod, "_create_client", lambda *a, **kw: _FakeClient())
+    r = client.post("/hpd/search", json={"q": "x", "scope": "person", "limit": 10})
+    assert r.status_code == 503
