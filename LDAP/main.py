@@ -6,11 +6,12 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from ldap3 import Server, Connection, ALL, NONE, SUBTREE, BASE, Tls  # BASE toegevoegd
-from ldap3.core.exceptions import LDAPSocketOpenError, LDAPStartTLSError, LDAPSessionTerminatedByServerError
-from ldap3.utils.conv import escape_filter_chars
+from bonsai import LDAPClient, LDAPSearchScope
+from bonsai import LDAPError
+from bonsai.errors import AuthenticationError as LDAPAuthenticationError
+from bonsai.errors import ConnectionError as LDAPConnectionError
+from bonsai.errors import NoSuchObjectError as LDAPNoSuchObjectError
 from typing import List, Literal
-import ssl
 import sys
 import logging
 import uuid
@@ -214,21 +215,36 @@ class SearchResponse(BaseModel):
     count: int
     items: List[HpdEntry]
 
-def _server(use_ssl: bool | None = None) -> Server:
-    tls = None
-    if settings.ldap_use_ssl or settings.ldap_start_tls:
-        tls = Tls(
-            validate=ssl.CERT_REQUIRED if settings.ldap_verify_tls else ssl.CERT_NONE,
-            version=ssl.PROTOCOL_TLS_CLIENT,
-            ca_certs_file=settings.ldap_ca_certs_file,
-        )
-    eff_use_ssl = settings.ldap_use_ssl if use_ssl is None else use_ssl
-    return Server(settings.ldap_uri, use_ssl=eff_use_ssl, get_info=NONE, tls=tls, connect_timeout=settings.ldap_connect_timeout)
+def _normalize_ldap_uri(uri: str, use_ssl: bool) -> str:
+    uri = uri.strip()
+    if "://" not in uri:
+        uri = ("ldaps://" if use_ssl else "ldap://") + uri
+    if use_ssl and uri.lower().startswith("ldap://"):
+        uri = "ldaps://" + uri[len("ldap://"):]
+    return uri
 
-def _connect() -> Connection:
+def _create_client(use_ssl: bool | None = None, start_tls: bool | None = None) -> LDAPClient:
+    eff_ssl = settings.ldap_use_ssl if use_ssl is None else use_ssl
+    eff_tls = settings.ldap_start_tls if start_tls is None else start_tls
+    uri = _normalize_ldap_uri(settings.ldap_uri, eff_ssl)
+    client = LDAPClient(uri, eff_tls)
+    if eff_ssl or eff_tls:
+        client.set_cert_policy("demand" if settings.ldap_verify_tls else "never")
+        if settings.ldap_ca_certs_file:
+            client.set_ca_cert(settings.ldap_ca_certs_file)
+    return client
+
+def _connect():
     eff_use_ssl = settings.ldap_use_ssl
     eff_start_tls = settings.ldap_start_tls
-    if settings.ldap_use_ssl and settings.ldap_start_tls:
+    uri_raw = settings.ldap_uri.strip()
+    if eff_start_tls and uri_raw.lower().startswith("ldaps://"):
+        logger.warning(
+            "LDAP configuratie: ldap_start_tls staat op True maar HPD_LDAP_URI gebruikt al ldaps://. "
+            "StartTLS is dan niet van toepassing; StartTLS wordt genegeerd."
+        )
+        eff_start_tls = False
+    if eff_use_ssl and eff_start_tls:
         logger.warning(
             "LDAP configuratie: zowel ldap_use_ssl als ldap_start_tls staan op True. "
             "Dit is geen geldige combinatie; er wordt nu alleen StartTLS gebruikt "
@@ -237,57 +253,58 @@ def _connect() -> Connection:
         eff_use_ssl = False
         eff_start_tls = True
 
-    srv = _server(use_ssl=eff_use_ssl)
+    client = _create_client(use_ssl=eff_use_ssl, start_tls=eff_start_tls)
+
     try:
-        conn = Connection(srv, user=settings.ldap_bind_dn, password=settings.ldap_bind_password, receive_timeout=settings.ldap_timeout, auto_bind=False)
+        # Bepaal of we base DN nodig hebben om de bind DN op te bouwen (placeholder of RDN)
+        needs_base_for_bind = settings.ldap_bind_dn and (
+            "{base}" in settings.ldap_bind_dn or "," not in settings.ldap_bind_dn
+        )
+        needs_discovery = settings.ldap_base_dn.lower() == "auto"
 
-        # Optioneel StartTLS
-        if eff_start_tls:
+        if needs_discovery and needs_base_for_bind and not _DISCOVERED_BASE:
+            # Anonieme connectie voor RootDSE discovery (alleen nodig om bind DN op te bouwen)
+            anon_conn = client.connect(timeout=settings.ldap_connect_timeout)
             try:
-                if not conn.start_tls():
-                    logger.error("LDAP StartTLS mislukt op %s", settings.ldap_uri)
-                    raise HTTPException(status_code=502, detail="StartTLS is mislukt bij LDAP-server.")
-            except LDAPStartTLSError as e:
-                logger.error("LDAP StartTLS mislukt naar %s: %r", settings.ldap_uri, e)
-                raise HTTPException(status_code=502, detail="LDAP StartTLS is mislukt.") from e               
-            except LDAPSessionTerminatedByServerError as e:
-                logger.error("LDAP StartTLS sessie afgebroken door server %s: %r", settings.ldap_uri, e)
-                raise HTTPException(status_code=502, detail="LDAP-server heeft de sessie afgebroken tijdens StartTLS. Controleer of StartTLS is ingeschakeld en of je de juiste poort/protocol gebruikt.") from e
+                _resolve_base_root(anon_conn)
+            finally:
+                anon_conn.close()
 
-        # Bind opent de connectie indien nodig
-        eff_dn = _effective_bind_dn(conn)
+        # Bind DN oplossen
+        eff_dn = None
+        if settings.ldap_bind_dn:
+            if needs_base_for_bind:
+                base_root = _resolve_base_root_cached()
+                eff_dn = _effective_bind_dn(base_root)
+            else:
+                eff_dn = settings.ldap_bind_dn
+
         if eff_dn:
-            if not conn.rebind(user=eff_dn, password=settings.ldap_bind_password):
-                logger.error("LDAP bind mislukt op %s", settings.ldap_uri)
-                raise HTTPException(status_code=502, detail="LDAP bind is mislukt; controleer instellingen/credentials.")
-        else:
-            # Anonieme bind
-            if not conn.bind():
-                logger.error("LDAP anonieme bind mislukt op %s", settings.ldap_uri)
-                raise HTTPException(status_code=502, detail="LDAP anonieme bind is mislukt.")
+            client.set_credentials("SIMPLE", user=eff_dn, password=settings.ldap_bind_password or "")
 
+        conn = client.connect(timeout=settings.ldap_connect_timeout)
         return conn
 
-    except LDAPSocketOpenError as e:
-        # Nettere fout bij Connection refused / unreachable
+    except LDAPAuthenticationError as e:
+        logger.error("LDAP bind mislukt op %s: %r", settings.ldap_uri, e)
+        raise HTTPException(status_code=502, detail="LDAP bind is mislukt; controleer instellingen/credentials.") from e
+    except LDAPConnectionError as e:
         logger.error("LDAP connectie naar %s faalde: %r", settings.ldap_uri, e)
         raise HTTPException(status_code=503, detail="LDAP server niet bereikbaar.") from e
-    except LDAPSessionTerminatedByServerError as e:
-        logger.error("LDAP sessie afgebroken door server tijdens StartTLS of bind op %s: %r", settings.ldap_uri, e)
-        raise HTTPException(status_code=502, detail="LDAP-server heeft de sessie onverwacht afgebroken tijdens StartTLS of bind, controleer of je de juiste poort/protocol (LDAP/LDAPS, StartTLS) en TLS-instellingen gebruikt.") from e
+    except LDAPError as e:
+        logger.error("LDAP fout naar %s: %r", settings.ldap_uri, e)
+        raise HTTPException(status_code=502, detail="LDAP fout bij verbinden.") from e
     except OSError as e:
         # Afvangen van b.v. ConnectionRefusedError, timeout, etc.
         logger.error("LDAP netwerkfout naar %s: %r", settings.ldap_uri, e)
-        raise HTTPException(status_code=503, detail="LDAP netwerkfout.") from e
+        raise HTTPException(status_code=503, detail="LDAP server niet bereikbaar.") from e
 
-def _discover_base_dn(conn: Connection) -> str | None:
+def _discover_base_dn(conn) -> str | None:
     """bepaal root via RootDSE wanneer LDAP_BASE_DN=auto."""
-    ok = conn.search(search_base="", search_filter="(objectClass=*)", search_scope=BASE, attributes=["namingContexts"], size_limit=1)
-    if not ok or not conn.entries:
+    results = conn.search("", LDAPSearchScope.BASE, "(objectClass=*)", attrlist=["namingContexts"], timeout=settings.ldap_timeout, sizelimit=1)
+    if not results:
         return None
-    vals = []
-    if "namingContexts" in conn.entries[0]:
-        vals = [str(v) for v in conn.entries[0]["namingContexts"].values]
+    vals = [str(v) for v in results[0].get("namingContexts", [])]
     if not vals:
         return None
     # meerdere contexts? log en kies dc=HPD als die aanwezig is, anders de eerste
@@ -304,7 +321,7 @@ def _discover_base_dn(conn: Connection) -> str | None:
         logger.info("RootDSE namingContexts -> %s", vals[0])
         return vals[0]
 
-def _resolve_base_root(conn: Connection) -> str:
+def _resolve_base_root(conn) -> str:
     global _DISCOVERED_BASE
     # gebruik discovery alleen als LDAP_BASE_DN=auto
     if settings.ldap_base_dn and settings.ldap_base_dn.lower() != "auto":
@@ -315,8 +332,25 @@ def _resolve_base_root(conn: Connection) -> str:
             raise HTTPException(status_code=502, detail="Kon namingContexts (root) niet bepalen.")
     return _DISCOVERED_BASE
 
+def _resolve_base_root_cached() -> str:
+    """Geeft de base DN terug zonder connectie (moet al ontdekt zijn of statisch geconfigureerd)."""
+    if settings.ldap_base_dn and settings.ldap_base_dn.lower() != "auto":
+        return settings.ldap_base_dn
+    if _DISCOVERED_BASE:
+        return _DISCOVERED_BASE
+    raise HTTPException(status_code=502, detail="Kon namingContexts (root) niet bepalen.")
+
+def _escape_ldap_filter(value: str) -> str:
+    """Escape speciale tekens voor LDAP filter (RFC 4515)."""
+    return (value
+            .replace("\\", "\\5c")
+            .replace("*", "\\2a")
+            .replace("(", "\\28")
+            .replace(")", "\\29")
+            .replace("\x00", "\\00"))
+
 def _make_filter(q: str, scope: str) -> str:
-    s = escape_filter_chars((q or "").strip(), encoding="utf-8")
+    s = _escape_ldap_filter((q or "").strip())
     # Lege zoekterm? -> geen substringdeel; lijst gewoon de eerste N binnen de OU
     if not s:
         return "(&(objectClass=inetOrgPerson))" if scope == "person" else "(objectClass=*)"
@@ -325,30 +359,27 @@ def _make_filter(q: str, scope: str) -> str:
     return f"(&(objectClass=*)(|(o=*{s}*)(ou=*{s}*)(cn=*{s}*)(mail=*{s}*)))"
 
 def _ldap_entry_to_model(entry) -> HpdEntry:
-    d = entry.entry_attributes_as_dict
     out_dict = {}
     for a in ALLOWED_ATTRS:
-        val = d.get(a)
+        val = entry.get(a)
         if val is None:
             out_dict[a] = []
         elif isinstance(val, list):
             out_dict[a] = [str(x) for x in val if x is not None]
         else:
             out_dict[a] = [str(val)]
-    return HpdEntry(dn=entry.entry_dn, **out_dict)
+    return HpdEntry(dn=str(entry.dn), **out_dict)
 
-def _effective_bind_dn(conn: Connection) -> str | None:
+def _effective_bind_dn(base_dn: str) -> str | None:
     dn = settings.ldap_bind_dn
     if not dn:
         return None  # anonieme bind
     # {base} placeholder
     if "{base}" in dn:
-        base = _resolve_base_root(conn)  # gebruikt discovery als LDAP_BASE_DN=auto
-        return dn.replace("{base}", base)
+        return dn.replace("{base}", base_dn)
     # RDN zonder komma? (bv. "cn=readonly")
     if "," not in dn:
-        base = _resolve_base_root(conn)
-        return f"{dn},{base}"
+        return f"{dn},{base_dn}"
     # Volledige DN zoals opgegeven
     return dn
 
@@ -371,23 +402,25 @@ def hpd_search(req: SearchRequest):
             base_dn = f"ou=HCRegulatedOrganization,{base_root}"
 
         # OU existence check (404 + LDIF-hint)
-        ou_exists = conn.search(search_base=base_dn, search_filter="(objectClass=*)", search_scope=BASE, attributes=["objectClass"], size_limit=1)
-        if not ou_exists or not conn.entries:
+        try:
+            ou_check = conn.search(base_dn, LDAPSearchScope.BASE, "(objectClass=*)", attrlist=["objectClass"], timeout=settings.ldap_timeout, sizelimit=1)
+        except LDAPNoSuchObjectError:
+            logger.warning("LDAP OU ontbreekt: %s", base_dn)
+            return SearchResponse(count=0, items=[])
+        if not ou_check:
             logger.warning("LDAP OU ontbreekt: %s", base_dn)
             return SearchResponse(count=0, items=[])
 
         ldap_filter = _make_filter(req.q, req.scope)
-        ok = conn.search(search_base=base_dn, search_filter=ldap_filter, search_scope=SUBTREE, attributes=ALLOWED_ATTRS, size_limit=req.limit)
-        if not ok:
-            return SearchResponse(count=0, items=[])
-        items = [_ldap_entry_to_model(e) for e in conn.entries]
+        results = conn.search(base_dn, LDAPSearchScope.SUBTREE, ldap_filter, attrlist=ALLOWED_ATTRS, timeout=settings.ldap_timeout, sizelimit=req.limit)
+        items = [_ldap_entry_to_model(e) for e in results]
         return SearchResponse(count=len(items), items=items)
     finally:
         try:
             if conn:
-                conn.unbind()
+                conn.close()
         except Exception as e:
-            logger.debug("LDAP unbind gaf een uitzondering: %r", e)
+            logger.debug("LDAP close gaf een uitzondering: %r", e)
             pass
 
 @app.get("/hpd/search", response_model=SearchResponse, dependencies=[Depends(verify_api_key)])
