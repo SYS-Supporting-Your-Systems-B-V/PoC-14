@@ -91,6 +91,7 @@ _DISCOVERED_BASE: str | None = None
 class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         request_id = str(uuid.uuid4())
+        request.state.request_id = request_id
         response = None
         try:
             response = await call_next(request)
@@ -186,10 +187,14 @@ def ldap_zoek_page():
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception("Onverwachte fout bij %s %s", request.method, request.url.path)
-    return JSONResponse(
+    response = JSONResponse(
         status_code=500,
         content={"detail": "Interne serverfout. Neem contact op met de beheerder."},
     )
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        response.headers["X-Request-ID"] = request_id
+    return response
 
 class SearchRequest(BaseModel):
     q: str = Field(..., description="Zoektekst, bv. 'bob'", max_length=64)
