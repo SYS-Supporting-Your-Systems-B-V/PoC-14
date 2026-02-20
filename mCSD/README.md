@@ -756,3 +756,21 @@ De proxy normaliseert foutresponses naar één vorm:
 - Connectieproblemen naar upstream worden als `502` teruggegeven met een `reason` zoals `timeout`, `dns`, `tls` of `network`.
 - In non-production kan er een extra `details` veld aanwezig zijn; in productie (`MCSD_IS_PRODUCTION=true`) wordt `details` weggelaten.
 
+## Upstream-ondersteuning en verrijking
+
+### Upstream-ondersteuning varieert
+
+De proxy kan alleen zoekparameters, ketenparameters en modifiers gebruiken die de upstream mCSD/FHIR-server daadwerkelijk ondersteunt. 
+
+De CapabilityStatement (`GET {MCSD_BASE}/metadata`) kan helpen om te zien welke search parameters en interacties een server zegt te ondersteunen. Deze geeft echter niet altijd een volledig of betrouwbaar beeld van ondersteuning voor alle search modifiers (zoals `:contains` of `:exact`). Ondersteuning voor bijvoorbeeld geografische zoekparameters (zoals `near` met afstand) is eveneens afhankelijk van de implementatie van de upstream-server.
+
+### OrganizationAffiliation verrijking via `_include`
+
+Bij het ophalen van `OrganizationAffiliation`-relaties vraagt de proxy:
+
+- `_include=OrganizationAffiliation:organization`
+- `_include=OrganizationAffiliation:participating-organization`
+
+Hierdoor kunnen organisatie-namen (indien de upstream `_include` ondersteunt) in dezelfde response worden meegeleverd, zodat er geen extra round-trips naar `Organization`-resources nodig zijn.
+
+Indien de upstream-server `_include` niet ondersteunt of deze niet retourneert, wordt de verrijking beperkt uitgevoerd, maar er worden geen aanvullende fetch-calls gedaan.
