@@ -14,6 +14,10 @@ Deze service maakt het makkelijker voor een client zoals een EPD (de standalone 
 
 Vereisten:
 - **Python 3.10+** (de backend gebruikt `str | None` type hints).
+- **libldap** (systeembibliotheek voor bonsai): de LDAP-client `bonsai` is een C-extensie en vereist een geïnstalleerde OpenLDAP clientbibliotheek.
+  - Debian/Ubuntu: `sudo apt-get install libldap2-dev libsasl2-dev`
+  - RHEL/CentOS: `sudo dnf install openldap-devel`
+  - macOS (Homebrew): `brew install openldap`
 
 Maak een virtualenv en installeer dependencies:
 
@@ -233,13 +237,16 @@ Opmerkingen:
 
 ### Configuratie in de HTML
 
-Bovenaan het `<script>`-blok staan instellingen die je per omgeving aanpast:
+Bovenaan het `<script>`-blok staat de API key die je per omgeving aanpast. De base URL wordt automatisch afgeleid van de origin van de pagina (`window.location.origin`), zodat de frontend altijd naar de server wijst waar hij vandaan geserveerd wordt:
 
 ```javascript
-const BASE_URL = "http://10.10.10.199:8000"; // bv. "http://hostname:8000"
-const API_KEY = "";                          // laat leeg als geen API key vereist is
-const HPD_LIMIT = 50;                        // max resultaten per zoekopdracht
+const API_KEY = "";   // laat leeg als geen API key vereist is
+const HPD_LIMIT = 50; // max resultaten per zoekopdracht
 ```
+
+> **Let op:** de pagina werkt alleen correct als hij via HTTP(S) geserveerd wordt vanuit dezelfde origin als de API (dus via uvicorn of een reverse proxy). Openen via `file://` werkt niet meer nu de base URL dynamisch is.
+
+Als je de pagina vanaf een andere origin wilt serveren, pas dan `HPD_LDAP_ALLOW_ORIGINS` aan en zet `BASE_URL` in de HTML handmatig op het juiste adres.
 
 ### Gebruikte endpoint
 
@@ -249,8 +256,9 @@ De pagina gebruikt één endpoint:
 
 ### HTML hosten vs. file:// openen
 
-- Met de standaard serverinstelling `HPD_LDAP_ALLOW_ORIGINS=["*"]` werkt openen via `file://` vaak al.
-- Als je CORS-origins wilt beperken, host de HTML dan via HTTP(S) (bijv. `python -m http.server`) en zet `HPD_LDAP_ALLOW_ORIGINS` op de juiste origin(s).
+- De pagina moet via HTTP(S) geserveerd worden vanuit dezelfde origin als de API (bijv. via uvicorn of een reverse proxy). De API serveert de pagina zelf op `GET /ldap_zoek/`.
+- Openen via `file://` werkt **niet** omdat `window.location.origin` dan `null` is.
+- Als je CORS-origins wilt beperken, zet dan `HPD_LDAP_ALLOW_ORIGINS` op de juiste origin(s).
 
 ---
 
