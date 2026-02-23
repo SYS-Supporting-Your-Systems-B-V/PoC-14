@@ -40,11 +40,6 @@ from fhir.resources.R4B.patient import Patient
 from .pdqm_where import _parse_fhir_date_bounds
 
 
-APP_ROOT = Path(__file__).resolve().parents[1]
-PDQM_LDAP_BASE = os.getenv("PDQM_LDAP_BASE", "http://localhost:8002").rstrip("/")
-PDQM_MCSD_BASE = os.getenv("PDQM_MCSD_BASE", "http://localhost:8000").rstrip("/")
-templates = Jinja2Templates(directory=str(APP_ROOT))
-
 # --- local minimal patient renderer for tests ---
 FHIR_MMN_URL = "http://hl7.org/fhir/StructureDefinition/patient-mothersMaidenName"
 
@@ -171,34 +166,6 @@ def _serve_html_page(path: Path) -> FileResponse:
             detail=f"HTML page not found: {path.name}",
         )
     return FileResponse(path, media_type="text/html; charset=utf-8")
-
-
-@app.get("/ldap_zoek/", include_in_schema=False)
-def ldap_zoek_page(request: Request):
-    path = APP_ROOT / "ldap_zoek.html"
-    if not path.is_file():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"HTML page not found: {path.name}",
-        )
-    return templates.TemplateResponse(
-        "ldap_zoek.html",
-        {"request": request, "ldap_base_url": PDQM_LDAP_BASE},
-    )
-
-
-@app.get("/mscd_zoek/", include_in_schema=False)
-def mscd_zoek_page(request: Request):
-    path = APP_ROOT / "mcsd_zoek.html"
-    if not path.is_file():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"HTML page not found: {path.name}",
-        )
-    return templates.TemplateResponse(
-        "mcsd_zoek.html",
-        {"request": request, "mcsd_base_url": PDQM_MCSD_BASE},
-    )
 
 
 @app.exception_handler(OperationalError)
